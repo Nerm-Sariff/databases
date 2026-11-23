@@ -1,14 +1,15 @@
-### Get all movies
-GET http://localhost:3000/movies
 
-### Get movie by ID
-GET http://localhost:3000/movies/1
+### 1. Get all movies
+GET http://localhost:3001/movies
 
-### Movie that does not exist
-GET http://localhost:3000/movies/999
+### 2. Get movie by ID
+GET http://localhost:3001/movies/1
 
-### Create a new movie
-POST http://localhost:3000/movies
+### 3. Get a movie that does not exist
+GET http://localhost:3001/movies/999
+
+### 4. Create a new movie
+POST http://localhost:3001/movies
 Content-Type: application/json
 
 {
@@ -17,87 +18,103 @@ Content-Type: application/json
   "year": 1982
 }
 
-### Invalid movie
-POST http://localhost:3000/movies
+### 5. Create an invalid movie
+POST http://localhost:3001/movies
 Content-Type: application/json
 
 {
   "director": "Nobody"
 }
 
-### Update a movie
-PATCH http://localhost:3000/movies/2
+### 6. Update a movie (PATCH)
+PATCH http://localhost:3001/movies/2
 Content-Type: application/json
 
 {
   "year": 2011
 }
 
-### Delete a movie
-DELETE http://localhost:3000/movies/6
-
-### Get one movie
-GET http://localhost:3000/movies/1
-
-### Get a missing movie
-GET http://localhost:3000/movies/999
-
-### Create a valid movie
-POST http://localhost:3000/movies
+### 7. Create another valid movie
+POST http://localhost:3001/movies
 Content-Type: application/json
 
 {
   "title": "Arrival",
-  "year": 2016,
-  "genre": "Sci-Fi"
+  "director": "Denis Villeneuve",
+  "year": 2016
 }
 
-### Create an invalid movie
-POST http://localhost:3000/movies
+### 8. Create an invalid movie
+POST http://localhost:3001/movies
 Content-Type: application/json
 
 {
   "title": "",
-  "year": "not a number"
+  "director": "Nobody"
 }
 
-### Replace a movie
-PUT http://localhost:3000/movies/1
+### 9. Replace a movie (PUT)
+PUT http://localhost:3001/movies/1
 Content-Type: application/json
 
 {
   "title": "The Matrix",
-  "year": 1999,
-  "genre": "Sci-Fi"
+  "director": "The Wachowskis",
+  "year": 1999
 }
 
-### Invalid incomplete PUT
-PUT http://localhost:3000/movies/1
+### 10. Invalid incomplete PUT
+PUT http://localhost:3001/movies/1
 Content-Type: application/json
 
 {
   "title": "The Matrix"
 }
 
-### Partially update a movie
-PATCH http://localhost:3000/movies/1
+### 11. Partially update a movie (PATCH)
+PATCH http://localhost:3001/movies/1
 Content-Type: application/json
 
 {
   "year": 2000
 }
 
-### Filter and sort movies
-GET http://localhost:3000/movies?genre=Sci-Fi&minYear=2000&sort=year
+### 12. Filter by director
+GET http://localhost:3001/movies?director=Nolan
 
-### Invalid query parameter
-GET http://localhost:3000/movies?minYear=invalid
+### 13. Filter by year
+GET http://localhost:3001/movies?year=2010
 
-### Delete a movie
-DELETE http://localhost:3000/movies/1
+### 14. Sort by year
+GET http://localhost:3001/movies?sortBy=year
 
-### Delete the same movie again
-DELETE http://localhost:3000/movies/1
+### 15. Sort by title
+GET http://localhost:3001/movies?sortBy=title
 
-### Unknown route
-GET http://localhost:3000/does-not-exist
+### 16. Empty PATCH test
+PATCH http://localhost:3001/movies/1
+Content-Type: application/json
+
+{}
+
+### 17. Delete a movie
+DELETE http://localhost:3001/movies/6
+
+### 18. Delete the same movie again
+DELETE http://localhost:3001/movies/6
+
+### 19. Unknown route
+GET http://localhost:3001/does-not-exist
+
+### 20. Check database connection
+GET http://localhost:3001/health/database
+
+### Create movie for persistence test
+POST http://localhost:3001/movies
+Content-Type: application/json
+
+{
+  "title": "Persistence Test Movie",
+  "director": "Test Director",
+  "year": 2025
+}

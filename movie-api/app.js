@@ -1,5 +1,9 @@
-const express = require('express');
-const morgan = require('morgan');
+
+require("dotenv").config();
+
+const express = require("express");
+const morgan = require("morgan");
+const pool = require("./db");
 
 const app = express();
 
@@ -7,44 +11,14 @@ const app = express();
 // 1. GENERAL MIDDLEWARE
 // =====================================
 
-// Parse incoming JSON request bodies
 app.use(express.json());
-
-// Log incoming HTTP requests
-app.use(morgan('combined'));
+app.use(morgan("combined"));
 
 // =====================================
-// 2. MOVIE DATA
+// 2. HELPER FUNCTIONS
 // =====================================
 
-let movies = [
-    {
-        id: 1,
-        title: 'Inception',
-        director: 'Christopher Nolan',
-        year: 2010,
-        genre: 'Sci-Fi'
-    },
-    {
-        id: 2,
-        title: 'The Matrix',
-        director: 'The Wachowskis',
-        year: 1999,
-        genre: 'Action'
-    },
-    {
-        id: 3,
-        title: 'Parasite',
-        director: 'Bong Joon-ho',
-        year: 2019,
-        genre: 'Thriller'
-    }
-];
-
-// =====================================
-// 3. HELPER FUNCTIONS
-// =====================================
-
+// Standard error response
 function sendError(res, statusCode, errorCode, message) {
     return res.status(statusCode).json({
         error: {
@@ -54,10 +28,11 @@ function sendError(res, statusCode, errorCode, message) {
     });
 }
 
+// Validate movie data
 function validateMovie(body, partial = false) {
     const errors = [];
 
-    const allowedFields = ['title', 'director', 'year', 'genre'];
+    const allowedFields = ["title", "director", "year"];
 
     // Check for unknown properties
     for (const key of Object.keys(body)) {
@@ -66,18 +41,31 @@ function validateMovie(body, partial = false) {
         }
     }
 
+    // Validate title
     if (!partial || body.title !== undefined) {
-        if (typeof body.title !== 'string' || body.title.trim() === '') {
-            errors.push('Title is required and must be a non-empty string');
+        if (
+            typeof body.title !== "string" ||
+            body.title.trim() === ""
+        ) {
+            errors.push(
+                "Title is required and must be a non-empty string"
+            );
         }
     }
 
+    // Validate director
     if (!partial || body.director !== undefined) {
-        if (typeof body.director !== 'string' || body.director.trim() === '') {
-            errors.push('Director is required and must be a non-empty string');
+        if (
+            typeof body.director !== "string" ||
+            body.director.trim() === ""
+        ) {
+            errors.push(
+                "Director is required and must be a non-empty string"
+            );
         }
     }
 
+    // Validate year
     if (!partial || body.year !== undefined) {
         const currentYear = new Date().getFullYear();
 
@@ -86,337 +74,431 @@ function validateMovie(body, partial = false) {
             body.year < 1888 ||
             body.year > currentYear + 5
         ) {
-            errors.push('Year must be a valid movie year');
-        }
-    }
-
-    if (!partial || body.genre !== undefined) {
-        if (typeof body.genre !== 'string' || body.genre.trim() === '') {
-            errors.push('Genre is required and must be a non-empty string');
+            errors.push("Year must be a valid movie year");
         }
     }
 
     // PATCH must contain at least one property
     if (partial && Object.keys(body).length === 0) {
-        errors.push('At least one property is required');
+        errors.push("At least one property is required");
     }
 
     return errors;
 }
 
+// Validate movie ID
+function validateId(id) {
+    const parsedId = Number(id);
+
+    if (!Number.isInteger(parsedId) || parsedId <= 0) {
+        return null;
+    }
+
+    return parsedId;
+}
+
+// =====================================
+// 3. DATABASE HEALTH CHECK
+// =====================================
+
+app.get("/health/database", async (req, res, next) => {
+    try {
+        const result = await pool.query(
+            "SELECT NOW() AS database_time"
+        );
+
+        res.json({
+            status: "ok",
+            databaseTime: result.rows[0].database_time
+        });
+
+    } catch (error) {
+        next(error);
+    }
+});
+
 // =====================================
 // 4. GET ALL MOVIES
 // =====================================
 
-app.get('/movies', (req, res) => {
-    let result = [...movies];
+app.get("/movies", async (req, res, next) => {
+    try {
+        const { director, year, sortBy } = req.query;
 
-    const { genre, minYear, sort, order } = req.query;
+        let query = `
+            SELECT
+                id,
+                title,
+                director,
+                release_year AS year
+            FROM movies
+        `;
 
-    // Filter by genre
-    if (genre) {
-        result = result.filter(
-            movie => movie.genre.toLowerCase() === genre.toLowerCase()
-        );
-    }
+        const conditions = [];
+        const values = [];
 
-    // Filter by minimum year
-    if (minYear !== undefined) {
-        const year = Number(minYear);
-
-        if (!Number.isInteger(year)) {
-            return sendError(
-                res,
-                400,
-                'INVALID_MIN_YEAR',
-                'minYear must be a valid number'
+        // Filter by director
+        if (director) {
+            values.push(`%${director}%`);
+            conditions.push(
+                `director ILIKE $${values.length}`
             );
         }
 
-        result = result.filter(movie => movie.year >= year);
-    }
+        // Filter by year
+        if (year) {
+            const parsedYear = Number(year);
 
-    // Validate sorting field
-    if (sort !== undefined && !['year', 'title'].includes(sort)) {
-        return sendError(
-            res,
-            400,
-            'INVALID_SORT_FIELD',
-            'Sort must be either year or title'
-        );
-    }
-
-    // Validate sorting order
-    if (order !== undefined && !['asc', 'desc'].includes(order)) {
-        return sendError(
-            res,
-            400,
-            'INVALID_SORT_ORDER',
-            'Order must be either asc or desc'
-        );
-    }
-
-    // Sort movies
-    if (sort) {
-        const direction = order === 'desc' ? -1 : 1;
-
-        result.sort((a, b) => {
-            if (sort === 'title') {
-                return a.title.localeCompare(b.title) * direction;
+            if (!Number.isInteger(parsedYear)) {
+                return res.status(400).json({
+                    message: "Year must be a valid integer"
+                });
             }
 
-            return (a.year - b.year) * direction;
-        });
-    }
+            values.push(parsedYear);
+            conditions.push(
+                `release_year = $${values.length}`
+            );
+        }
 
-    res.status(200).json(result);
+        // Add WHERE conditions
+        if (conditions.length > 0) {
+            query += ` WHERE ${conditions.join(" AND ")}`;
+        }
+
+        // Server-defined sorting allow-list
+        const allowedSortColumns = {
+            id: "id",
+            year: "release_year",
+            title: "title"
+        };
+
+        const sortColumn =
+            allowedSortColumns[sortBy] || "id";
+
+        query += ` ORDER BY ${sortColumn}`;
+
+        const result = await pool.query(query, values);
+
+        res.json(result.rows);
+
+    } catch (error) {
+        next(error);
+    }
 });
 
 // =====================================
 // 5. GET MOVIE BY ID
 // =====================================
 
-app.get('/movies/:id', (req, res) => {
-    const id = Number(req.params.id);
+app.get("/movies/:id", async (req, res, next) => {
+    try {
+        const id = validateId(req.params.id);
 
-    if (!Number.isInteger(id) || id <= 0) {
-        return sendError(
-            res,
-            400,
-            'INVALID_ID',
-            'Movie ID must be a positive integer'
-        );
+        if (id === null) {
+            return res.status(400).json({
+                message: "Invalid movie ID"
+            });
+        }
+
+        const result = await pool.query(`
+            SELECT
+                id,
+                title,
+                director,
+                release_year AS year
+            FROM movies
+            WHERE id = $1
+        `, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Movie not found"
+            });
+        }
+
+        res.json(result.rows[0]);
+
+    } catch (error) {
+        next(error);
     }
-
-    const movie = movies.find(movie => movie.id === id);
-
-    if (!movie) {
-        return sendError(
-            res,
-            404,
-            'MOVIE_NOT_FOUND',
-            'Movie not found'
-        );
-    }
-
-    res.status(200).json(movie);
 });
 
 // =====================================
 // 6. POST - CREATE A MOVIE
 // =====================================
 
-app.post('/movies', (req, res) => {
-    const errors = validateMovie(req.body);
+app.post("/movies", async (req, res, next) => {
+    try {
+        const validationErrors = validateMovie(req.body);
 
-    if (errors.length > 0) {
-        return sendError(
-            res,
-            400,
-            'VALIDATION_ERROR',
-            errors.join(', ')
-        );
+        if (validationErrors.length > 0) {
+            return res.status(400).json({
+                message: validationErrors
+            });
+        }
+
+        const { title, director, year } = req.body;
+
+        const result = await pool.query(`
+            INSERT INTO movies (
+                title,
+                director,
+                release_year
+            )
+            VALUES ($1, $2, $3)
+            RETURNING
+                id,
+                title,
+                director,
+                release_year AS year
+        `, [title.trim(), director.trim(), year]);
+
+        res.status(201).json(result.rows[0]);
+
+    } catch (error) {
+        next(error);
     }
-
-    const newMovie = {
-        id: Math.max(0, ...movies.map(movie => movie.id)) + 1,
-        title: req.body.title.trim(),
-        director: req.body.director.trim(),
-        year: req.body.year,
-        genre: req.body.genre.trim()
-    };
-
-    movies.push(newMovie);
-
-    res.status(201).json(newMovie);
 });
 
 // =====================================
 // 7. PUT - REPLACE A MOVIE
 // =====================================
 
-app.put('/movies/:id', (req, res) => {
-    const id = Number(req.params.id);
+app.put("/movies/:id", async (req, res, next) => {
+    try {
+        const id = validateId(req.params.id);
 
-    if (!Number.isInteger(id) || id <= 0) {
-        return sendError(
-            res,
-            400,
-            'INVALID_ID',
-            'Movie ID must be a positive integer'
-        );
+        if (id === null) {
+            return res.status(400).json({
+                message: "Invalid movie ID"
+            });
+        }
+
+        // Validate the complete request body
+        const validationErrors = validateMovie(req.body);
+
+        if (validationErrors.length > 0) {
+            return res.status(400).json({
+                message: validationErrors
+            });
+        }
+
+        const { title, director, year } = req.body;
+
+        const result = await pool.query(`
+            UPDATE movies
+            SET
+                title = $1,
+                director = $2,
+                release_year = $3
+            WHERE id = $4
+            RETURNING
+                id,
+                title,
+                director,
+                release_year AS year
+        `, [title.trim(), director.trim(), year, id]);
+
+        // Return 404 if no row was updated
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Movie not found"
+            });
+        }
+
+        res.status(200).json(result.rows[0]);
+
+    } catch (error) {
+        next(error);
     }
-
-    const movieIndex = movies.findIndex(movie => movie.id === id);
-
-    if (movieIndex === -1) {
-        return sendError(
-            res,
-            404,
-            'MOVIE_NOT_FOUND',
-            'Movie not found'
-        );
-    }
-
-    const errors = validateMovie(req.body);
-
-    if (errors.length > 0) {
-        return sendError(
-            res,
-            400,
-            'VALIDATION_ERROR',
-            errors.join(', ')
-        );
-    }
-
-    const updatedMovie = {
-        id: id,
-        title: req.body.title.trim(),
-        director: req.body.director.trim(),
-        year: req.body.year,
-        genre: req.body.genre.trim()
-    };
-
-    movies[movieIndex] = updatedMovie;
-
-    res.status(200).json(updatedMovie);
 });
 
 // =====================================
 // 8. PATCH - UPDATE PART OF A MOVIE
 // =====================================
 
-app.patch('/movies/:id', (req, res) => {
-    const id = Number(req.params.id);
+app.patch("/movies/:id", async (req, res, next) => {
+    try {
+        const id = validateId(req.params.id);
 
-    if (!Number.isInteger(id) || id <= 0) {
-        return sendError(
-            res,
-            400,
-            'INVALID_ID',
-            'Movie ID must be a positive integer'
+        if (id === null) {
+            return res.status(400).json({
+                message: "Invalid movie ID"
+            });
+        }
+
+        // Server-defined allow-list
+        const allowedFields = {
+            title: "title",
+            director: "director",
+            year: "release_year"
+        };
+
+        // Reject an empty PATCH body
+        const fields = Object.keys(req.body);
+
+        if (fields.length === 0) {
+            return res.status(400).json({
+                message: "PATCH body cannot be empty"
+            });
+        }
+
+        // Reject unknown fields
+        const invalidFields = fields.filter(
+            field => !Object.prototype.hasOwnProperty.call(
+                allowedFields,
+                field
+            )
         );
+
+        if (invalidFields.length > 0) {
+            return res.status(400).json({
+                message: `Invalid fields: ${invalidFields.join(", ")}`
+            });
+        }
+
+        // Validate supplied field values
+        const validationErrors = validateMovie(req.body, true);
+
+        if (validationErrors.length > 0) {
+            return res.status(400).json({
+                message: validationErrors
+            });
+        }
+
+        // Build SET clauses and parameter values
+        const setClauses = [];
+        const values = [];
+
+        for (const field of fields) {
+            let value = req.body[field];
+
+            if (field === "title" || field === "director") {
+                value = value.trim();
+            }
+
+            values.push(value);
+
+            // Column comes only from the server allow-list
+            const column = allowedFields[field];
+            const placeholder = `$${values.length}`;
+
+            setClauses.push(`${column} = ${placeholder}`);
+        }
+
+        // Add ID as the final parameter
+        values.push(id);
+
+        const idPlaceholder = `$${values.length}`;
+
+        const query = `
+            UPDATE movies
+            SET ${setClauses.join(", ")}
+            WHERE id = ${idPlaceholder}
+            RETURNING
+                id,
+                title,
+                director,
+                release_year AS year
+        `;
+
+        const result = await pool.query(query, values);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Movie not found"
+            });
+        }
+
+        res.status(200).json(result.rows[0]);
+
+    } catch (error) {
+        next(error);
     }
-
-    const movie = movies.find(movie => movie.id === id);
-
-    if (!movie) {
-        return sendError(
-            res,
-            404,
-            'MOVIE_NOT_FOUND',
-            'Movie not found'
-        );
-    }
-
-    const errors = validateMovie(req.body, true);
-
-    if (errors.length > 0) {
-        return sendError(
-            res,
-            400,
-            'VALIDATION_ERROR',
-            errors.join(', ')
-        );
-    }
-
-    if (req.body.title !== undefined) {
-        movie.title = req.body.title.trim();
-    }
-
-    if (req.body.director !== undefined) {
-        movie.director = req.body.director.trim();
-    }
-
-    if (req.body.year !== undefined) {
-        movie.year = req.body.year;
-    }
-
-    if (req.body.genre !== undefined) {
-        movie.genre = req.body.genre.trim();
-    }
-
-    res.status(200).json(movie);
 });
 
 // =====================================
 // 9. DELETE - REMOVE A MOVIE
 // =====================================
 
-app.delete('/movies/:id', (req, res) => {
-    const id = Number(req.params.id);
+app.delete("/movies/:id", async (req, res, next) => {
+    try {
+        const id = validateId(req.params.id);
 
-    if (!Number.isInteger(id) || id <= 0) {
-        return sendError(
-            res,
-            400,
-            'INVALID_ID',
-            'Movie ID must be a positive integer'
-        );
+        if (id === null) {
+            return res.status(400).json({
+                message: "Invalid movie ID"
+            });
+        }
+
+        const result = await pool.query(`
+            DELETE FROM movies
+            WHERE id = $1
+            RETURNING id
+        `, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                message: "Movie not found"
+            });
+        }
+
+        // 204 response must not contain a body
+        res.status(204).send();
+
+    } catch (error) {
+        next(error);
     }
-
-    const movieIndex = movies.findIndex(movie => movie.id === id);
-
-    if (movieIndex === -1) {
-        return sendError(
-            res,
-            404,
-            'MOVIE_NOT_FOUND',
-            'Movie not found'
-        );
-    }
-
-    movies.splice(movieIndex, 1);
-
-    res.status(200).json({
-        message: 'Movie deleted'
-    });
 });
 
 // =====================================
-// 10. TEMPORARY ERROR TEST ROUTE
-// Adaded for testing purposes. Remove in production.
-// =====================================
-
-app.get('/test-error', (req, res, next) => {
-    next(new Error('This is a test server error'));
-});
-
-// =====================================
-// 11. UNKNOWN ROUTE HANDLER (404)
+// 10. UNKNOWN ROUTE HANDLER
 // =====================================
 
 app.use((req, res) => {
     sendError(
         res,
         404,
-        'ROUTE_NOT_FOUND',
-        'The requested route does not exist'
+        "ROUTE_NOT_FOUND",
+        "The requested route does not exist"
     );
 });
 
 // =====================================
-// 12. ERROR HANDLING MIDDLEWARE
+// 11. CENTRALIZED ERROR HANDLING
 // =====================================
 
 app.use((err, req, res, next) => {
     console.error(err);
 
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    // Handle malformed JSON request bodies
+    if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+        return sendError(
+            res,
+            400,
+            "INVALID_JSON",
+            "Request body contains invalid JSON"
+        );
+    }
+
     sendError(
         res,
         500,
-        'INTERNAL_SERVER_ERROR',
-        'An unexpected server error occurred'
+        "INTERNAL_SERVER_ERROR",
+        "An unexpected server error occurred"
     );
 });
 
 // =====================================
-// 13. START SERVER
+// 12. START SERVER
 // =====================================
 
-const PORT = process.env.PORT || 3000;
-
-console.log('Starting Movie API...');
+const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
     console.log(`Server is running at http://localhost:${PORT}`);
